@@ -24,10 +24,8 @@ def predict():
         }), 500
 
     try:
-        # 2. ตรวจสอบและรับไฟล์
-        # ใช้ request.files["image"] โดยตรงตามที่ Next.js ส่งมา
+        # 2. ตรวจสอบและรับไฟล์ ใช้ request.files["image"] โดยตรงตามที่ Next.js ส่งมา
         if "image" not in request.files:
-            # ถ้าไม่พบ ให้ส่ง 400 กลับไปทันที
             print("ERROR: File key 'image' not found in request.files.")
             return jsonify({ 
                 "error": "Missing 'image' file in request.files",
@@ -36,8 +34,7 @@ def predict():
             
         file = request.files["image"]
         
-        # 3. อ่านและเปิดไฟล์ด้วย PIL
-        # ใช้ file.read() เพื่ออ่านไบนารี และใช้ io.BytesIO เพื่อให้ PIL เปิดได้
+        # 3. อ่านและเปิดไฟล์ด้วย PIL ใช้ file.read() เพื่ออ่านไบนารี และใช้ io.BytesIO เพื่อให้ PIL เปิดได้
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
         print(f"Received file: {file.filename}, Image size: {img.size}")
@@ -51,8 +48,7 @@ def predict():
             for r in results[0].boxes:
                 predictions.append({
                     "class": model.names.get(int(r.cls[0]), "Unknown"),
-                    "confidence": float(r.conf[0]),
-                    "bbox": r.xyxy[0].tolist()
+                    "confidence": float(r.conf[0])
                 })
         
         print(f"Prediction successful. Found {len(predictions)} objects.")
