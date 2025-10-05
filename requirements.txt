@@ -1,13 +1,13 @@
-torch
-torchvision
-timm
+torch==2.0.1
+torchvision==0.15.2
 Pillow
+flask
+flask-cors
+timm
+rembg
+onnxruntime
+pandas
 matplotlib
 seaborn
-pandas
-pyyaml
-tqdm
 psutil
-rembg
-onnxruntime; python_version >= "3.7"
-huggingface_hub[hf_transfer]
+gunicorn

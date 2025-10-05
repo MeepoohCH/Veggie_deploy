@@ -3,50 +3,65 @@ from flask_cors import CORS
 from PIL import Image
 import io
 import torch
-import timm
 from torchvision import transforms
+import timm
+import os
 import traceback
 
 app = Flask(__name__)
 CORS(app)
-app.config['MAX_CONTENT_LENGTH'] = 5*1024*1024
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB limit
 
 # ===============================
-# โมเดล timm
+# โหลดโมเดลแบบ safe
 # ===============================
-def build_gate_model(num_classes=2):
-    return timm.create_model("mobilenetv3_large_100", pretrained=False, num_classes=num_classes)
-
-def build_leaf_model(num_classes=3):
-    return timm.create_model("tf_efficientnetv2_s", pretrained=False, num_classes=num_classes)
-
-def load_model(model_func, path):
+def load_leaf_model(path="leaf_model.pt"):
+    full_path = os.path.join(os.getcwd(), path)
     try:
-        checkpoint = torch.load(path, map_location="cpu")
-        state_dict = checkpoint.get("model", checkpoint) if isinstance(checkpoint, dict) else checkpoint
-        model = model_func()
+        checkpoint = torch.load(full_path, map_location="cpu")
+        state_dict = checkpoint.get("model", checkpoint)
+
+        model = timm.create_model("mobilenetv3_large_100", pretrained=False, num_classes=2)
         model.load_state_dict(state_dict)
         model.eval()
-        print(f"✅ Model loaded from {path}")
+        print(f"✅ Leaf model loaded from {full_path}")
         return model
     except Exception as e:
-        print(f"❌ Failed to load {path}: {e}")
+        print(f"❌ Failed to load leaf model from {full_path}: {e}")
         traceback.print_exc()
         return None
 
-leaf_model = load_model(lambda: build_gate_model(num_classes=2), "leaf_model.pt")
-type_model = load_model(lambda: build_leaf_model(num_classes=3), "type_model.pt")
+def load_type_model(path="type_model.pt"):
+    full_path = os.path.join(os.getcwd(), path)
+    try:
+        checkpoint = torch.load(full_path, map_location="cpu")
+        state_dict = checkpoint.get("model", checkpoint)
+
+        model = timm.create_model("tf_efficientnetv2_s", pretrained=False, num_classes=3)
+        model.load_state_dict(state_dict)
+        model.eval()
+        print(f"✅ Type model loaded from {full_path}")
+        return model
+    except Exception as e:
+        print(f"❌ Failed to load type model from {full_path}: {e}")
+        traceback.print_exc()
+        return None
+
+# โหลดโมเดล
+leaf_model = load_leaf_model()
+type_model = load_type_model()
 
 if leaf_model is None or type_model is None:
-    raise RuntimeError("One or both models failed to load")
+    raise RuntimeError("One or both PyTorch models failed to load. Check leaf_model.pt/type_model.pt")
 
 # ===============================
 # Preprocess
 # ===============================
 preprocess = transforms.Compose([
-    transforms.Resize((224,224)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
 ])
 
 # ===============================
@@ -56,38 +71,67 @@ preprocess = transforms.Compose([
 def predict():
     try:
         if "image" not in request.files:
-            return jsonify({"error":"Missing 'image' in request.files"}),400
+            return jsonify({"error": "Missing 'image' in request.files"}), 400
+
         file = request.files["image"]
-        img = Image.open(io.BytesIO(file.read())).convert("RGB")
+        img_bytes = file.read()
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+        # Leaf model
         leaf_tensor = preprocess(img).unsqueeze(0)
         with torch.no_grad():
             leaf_out = leaf_model(leaf_tensor)
             leaf_probs = torch.nn.functional.softmax(leaf_out, dim=1)
             leaf_conf, leaf_pred = torch.max(leaf_probs, dim=1)
             is_leaf = bool(leaf_pred.item() == 1)
-        leaf_result = {"class":"leaf" if is_leaf else "not_leaf","confidence":float(leaf_conf.item())}
+
+        leaf_predictions = {
+            "class": "leaf" if is_leaf else "not_leaf",
+            "confidence": float(leaf_conf.item())
+        }
+
         if not is_leaf:
-            return jsonify({"leafCheck":"no","leafPredictions":leaf_result,"filename":file.filename,"image_size":img.size})
+            return jsonify({
+                "leafCheck": "no",
+                "leafPredictions": leaf_predictions,
+                "message": "This image is not classified as a leaf.",
+                "filename": file.filename,
+                "image_size": img.size
+            })
+
+        # Type model
         type_tensor = preprocess(img).unsqueeze(0)
         with torch.no_grad():
             type_out = type_model(type_tensor)
             type_probs = torch.nn.functional.softmax(type_out, dim=1)
-            type_conf,type_pred = torch.max(type_probs,dim=1)
-        type_classes = ["class1","class2","class3"]
+            type_conf, type_pred = torch.max(type_probs, dim=1)
+
+        type_classes = ["basil", "spinach", "mint"]
         best_class = type_classes[type_pred.item()]
+        best_conf = float(type_conf.item())
+
         return jsonify({
-            "leafCheck":"yes",
-            "leafPredictions":leaf_result,
-            "bestPrediction":{"class":best_class,"confidence":float(type_conf.item())},
-            "filename":file.filename,
-            "image_size":img.size
+            "leafCheck": "yes",
+            "leafPredictions": leaf_predictions,
+            "bestPrediction": {
+                "class": best_class,
+                "confidence": best_conf
+            },
+            "filename": file.filename,
+            "image_size": img.size
         })
+
     except Exception as e:
-        return jsonify({"error":"Prediction failed","details":str(e)}),500
+        detailed_error = traceback.format_exc()
+        print("❌ ERROR DURING PREDICTION")
+        print(detailed_error)
+        return jsonify({"error": "Prediction failed", "details": str(e)}), 500
 
 @app.route("/health")
 def health():
-    return {"status":"ok","message":"All models loaded successfully."},200
+    if leaf_model and type_model:
+        return {"status": "ok", "message": "All models loaded successfully."}, 200
+    return {"status": "model load failed", "message": "One or more models not initialized."}, 500
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=5000,debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
