@@ -1,4 +1,5 @@
+torch
+torchvision
+Pillow
 flask
-ultralytics
 gunicorn
-pillow
