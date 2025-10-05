@@ -1,13 +1,13 @@
 torch==2.0.1
 torchvision==0.15.2
+timm
 Pillow
 flask
 flask-cors
-timm
+gunicorn
 rembg
 onnxruntime
 pandas
 matplotlib
 seaborn
 psutil
-gunicorn
