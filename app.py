@@ -1,74 +1,130 @@
-from flask import Flask, request, jsonify
-from ultralytics import YOLO
+import io, json, traceback
+from pathlib import Path
+from typing import List
 from PIL import Image
-import io
-import traceback
 
-app = Flask(__name__)
+import torch
+import timm
+from torchvision import transforms, datasets
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-# โหลดโมเดล
-try:
-    model = YOLO("best.pt")
-    print("YOLO Model loaded successfully from best.pt")
-except Exception as e:
-    print(f"ERROR: Could not load model 'best.pt'. Please check the file path. Details: {e}")
-    model = None
+# =========================
+# Config
+# =========================
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    # 1. ตรวจสอบสถานะโมเดล
-    if model is None:
-        return jsonify({
-            "error": "Model Initialization Error",
-            "details": "YOLO model failed to load during server startup."
-        }), 500
+LEAF_MODEL_PATH = Path("leaf_model.pt")
+TYPE_MODEL_PATH = Path("type_model.pt")
 
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+# =========================
+# Helper functions
+# =========================
+def _load_classes_from_run(best_pt: Path):
+    cj = best_pt.parent / "classes.json"
+    if cj.exists():
+        return json.loads(cj.read_text(encoding="utf-8"))
+    raise RuntimeError(f"Cannot find classes.json for {best_pt}")
+
+def _build_model(name: str, num_classes: int):
+    if "efficientnet" in name.lower():
+        return timm.create_model("tf_efficientnetv2_s", pretrained=False, num_classes=num_classes)
+    else:
+        return timm.create_model("mobilenetv3_large_100", pretrained=False, num_classes=num_classes)
+
+def _safe_load_state_dict(model, ckpt_path: Path):
+    ck = torch.load(ckpt_path, map_location=DEVICE)
+    state_dict = ck["model"] if isinstance(ck, dict) and "model" in ck else ck
+    model.load_state_dict(state_dict, strict=False)
+    return model
+
+def _make_eval_transform(size: int = 224):
+    return transforms.Compose([
+        transforms.Resize(int(size * 1.1)),
+        transforms.CenterCrop(size),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])
+
+@torch.no_grad()
+def _predict(model, img: Image.Image, tfm, device=DEVICE):
+    x = tfm(img.convert("RGB")).unsqueeze(0).to(device)
+    logits = model(x)
+    probs = torch.softmax(logits, dim=1)[0]
+    conf, idx = probs.max(dim=0)
+    return int(idx.item()), float(conf.item()), probs.cpu().numpy().tolist()
+
+# =========================
+# Load models
+# =========================
+print("Loading models...")
+
+LEAF_CLASSES = _load_classes_from_run(LEAF_MODEL_PATH)
+TYPE_CLASSES = _load_classes_from_run(TYPE_MODEL_PATH)
+
+leaf_model = _safe_load_state_dict(
+    _build_model("mobilenetv3_large_100", num_classes=len(LEAF_CLASSES)),
+    LEAF_MODEL_PATH
+).to(DEVICE).eval()
+
+type_model = _safe_load_state_dict(
+    _build_model("tf_efficientnetv2_s", num_classes=len(TYPE_CLASSES)),
+    TYPE_MODEL_PATH
+).to(DEVICE).eval()
+
+tf_leaf = _make_eval_transform(224)
+tf_type = _make_eval_transform(256)
+
+# =========================
+# FastAPI app
+# =========================
+app = FastAPI(title="Leaf & Type Classifier API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "device": DEVICE,
+        "leaf_classes": LEAF_CLASSES,
+        "type_classes": TYPE_CLASSES
+    }
+
+@app.post("/predict")
+async def predict(image: UploadFile = File(...)):
     try:
-        # 2. ตรวจสอบและรับไฟล์ ใช้ request.files["image"] โดยตรงตามที่ Next.js ส่งมา
-        if "image" not in request.files:
-            print("ERROR: File key 'image' not found in request.files.")
-            return jsonify({ 
-                "error": "Missing 'image' file in request.files",
-                "details": "The Flask server did not receive the file with the expected key 'image'."
-            }), 400
-            
-        file = request.files["image"]
-        
-        # 3. อ่านและเปิดไฟล์ด้วย PIL ใช้ file.read() เพื่ออ่านไบนารี และใช้ io.BytesIO เพื่อให้ PIL เปิดได้
-        img_bytes = file.read()
+        img_bytes = await image.read()
         img = Image.open(io.BytesIO(img_bytes))
-        print(f"Received file: {file.filename}, Image size: {img.size}")
 
-        # 4. การประมวลผลโมเดล
-        results = model(img)
+        # Stage 1: leaf model
+        leaf_idx, leaf_conf, _ = _predict(leaf_model, img, tf_leaf)
+        leaf_label = LEAF_CLASSES[leaf_idx]
 
-        # 5. การดึงผลลัพธ์
-        predictions = []
-        if results and hasattr(results[0], 'boxes'):
-            for r in results[0].boxes:
-                predictions.append({
-                    "class": model.names.get(int(r.cls[0]), "Unknown"),
-                    "confidence": float(r.conf[0])
-                })
-        
-        print(f"Prediction successful. Found {len(predictions)} objects.")
-        return jsonify(predictions)
+        # Stage 2: type model
+        type_idx, type_conf, type_probs = _predict(type_model, img, tf_type)
+        type_label = TYPE_CLASSES[type_idx]
 
+        return JSONResponse({
+            "leaf": {"class": leaf_label, "confidence": leaf_conf},
+            "type": {
+                "class": type_label,
+                "confidence": type_conf,
+                "probs": {TYPE_CLASSES[i]: float(type_probs[i]) for i in range(len(TYPE_CLASSES))}
+            }
+        })
     except Exception as e:
-        detailed_error = traceback.format_exc()
-        print(f"--- CRITICAL ERROR DURING PREDICTION ---")
-        print(detailed_error)
-        print("------------------------------------------")
-        
-        # ส่ง 500 Internal Server Error พร้อมรายละเอียดกลับไป
-        return jsonify({
-            "error": "Prediction processing failed in Flask",
-            "details": str(e),
-            "trace": detailed_error
-        }), 500
-
-
-if __name__ == "__main__":
-    # สำคัญ: เพื่อให้สามารถดีบักได้ง่าย ควรตั้งค่า CORS ในสภาพแวดล้อมจริง
-    # สำหรับการทดสอบ localhost จะไม่ต้องตั้งค่า CORS แต่ถ้ายังไม่ได้ผล ให้ลองใช้ไลบรารี flask_cors
-    app.run(host="0.0.0.0", port=5000)
+        return JSONResponse(
+            {"error": "Prediction failed", "details": str(e), "trace": traceback.format_exc()},
+            status_code=500
+        )

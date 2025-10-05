@@ -1,4 +1,6 @@
-flask
-ultralytics
-gunicorn
+fastapi
+uvicorn
+torch
+torchvision
+timm
 pillow

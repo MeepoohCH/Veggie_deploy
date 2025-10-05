@@ -1,13 +1,13 @@
 services:
-  veggie_app:
+  leaf_api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: veggie_app
+    container_name: leaf_api
     ports:
-      - "5000:5000"   # map port 5000 ของ container ไป host
+      - "8000:8000"
     volumes:
-      - .:/app        # sync โค้ดจาก host ไป container
+      - .:/app
     environment:
       - PYTHONUNBUFFERED=1
     restart: always
