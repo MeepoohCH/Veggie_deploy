@@ -1,14 +1,8 @@
-numpy<2
 torch==2.0.1
 torchvision==0.15.2
 timm
+numpy<2
 Pillow
 flask
 flask-cors
 gunicorn
-rembg
-onnxruntime
-pandas
-matplotlib
-seaborn
-psutil

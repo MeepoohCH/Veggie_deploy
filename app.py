@@ -12,6 +12,23 @@ app = Flask(__name__)
 CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB limit
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# ===============================
+# Transform สำหรับ inference (เหมือนตอนเทรน)
+# ===============================
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD  = [0.229, 0.224, 0.225]
+IMG_SIZE = 224
+
+def eval_transform(img):
+    return transforms.Compose([
+        transforms.Resize(int(IMG_SIZE * 1.15)),
+        transforms.CenterCrop(IMG_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])(img)
+
 # ===============================
 # โหลดโมเดลแบบ safe
 # ===============================
@@ -20,10 +37,9 @@ def load_leaf_model(path="leaf_model.pt"):
     try:
         checkpoint = torch.load(full_path, map_location="cpu")
         state_dict = checkpoint.get("model", checkpoint)
-
         model = timm.create_model("mobilenetv3_large_100", pretrained=False, num_classes=2)
         model.load_state_dict(state_dict)
-        model.eval()
+        model.eval().to(DEVICE)
         print(f"✅ Leaf model loaded from {full_path}")
         return model
     except Exception as e:
@@ -36,10 +52,9 @@ def load_type_model(path="type_model.pt"):
     try:
         checkpoint = torch.load(full_path, map_location="cpu")
         state_dict = checkpoint.get("model", checkpoint)
-
         model = timm.create_model("tf_efficientnetv2_s", pretrained=False, num_classes=3)
         model.load_state_dict(state_dict)
-        model.eval()
+        model.eval().to(DEVICE)
         print(f"✅ Type model loaded from {full_path}")
         return model
     except Exception as e:
@@ -47,7 +62,9 @@ def load_type_model(path="type_model.pt"):
         traceback.print_exc()
         return None
 
-# โหลดโมเดล
+# ===============================
+# โหลดโมเดลตอนเริ่มเซิร์ฟเวอร์
+# ===============================
 leaf_model = load_leaf_model()
 type_model = load_type_model()
 
@@ -55,17 +72,7 @@ if leaf_model is None or type_model is None:
     raise RuntimeError("One or both PyTorch models failed to load. Check leaf_model.pt/type_model.pt")
 
 # ===============================
-# Preprocess
-# ===============================
-preprocess = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
-])
-
-# ===============================
-# Flask routes
+# Predict route
 # ===============================
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -77,8 +84,9 @@ def predict():
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
+        # -----------------
         # Leaf model
-        leaf_tensor = preprocess(img).unsqueeze(0)
+        leaf_tensor = eval_transform(img).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
             leaf_out = leaf_model(leaf_tensor)
             leaf_probs = torch.nn.functional.softmax(leaf_out, dim=1)
@@ -99,8 +107,9 @@ def predict():
                 "image_size": img.size
             })
 
+        # -----------------
         # Type model
-        type_tensor = preprocess(img).unsqueeze(0)
+        type_tensor = eval_transform(img).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
             type_out = type_model(type_tensor)
             type_probs = torch.nn.functional.softmax(type_out, dim=1)
@@ -127,11 +136,15 @@ def predict():
         print(detailed_error)
         return jsonify({"error": "Prediction failed", "details": str(e)}), 500
 
+# ===============================
+# Health check
+# ===============================
 @app.route("/health")
 def health():
     if leaf_model and type_model:
         return {"status": "ok", "message": "All models loaded successfully."}, 200
     return {"status": "model load failed", "message": "One or more models not initialized."}, 500
 
+# ===============================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
