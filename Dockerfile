@@ -1,23 +1,26 @@
-# Base image: Python slim (เบากว่า ultralytics image)
+# Base image
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY . .
 
-# ติดตั้ง dependencies
-RUN apt-get update && apt-get install -y \
+# ติดตั้ง OS dependencies สำหรับ Pillow และ Torch
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
     libjpeg-dev \
+    libpng-dev \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+# คัดลอกไฟล์ requirements
+COPY requirements.txt .
 
-# เปิดพอร์ต Flask
-EXPOSE 5000
+# ติดตั้ง Python dependencies
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && rm -rf /tmp/pip-*
 
-# รัน Flask ผ่าน gunicorn
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:5000"]
+# คัดลอกไฟล์โปรเจกต์ทั้งหมด
+COPY . .
+
+# รันแอปด้วย Gunicorn
+CMD ["gunicorn", "-b", "0.0.0.0:5000", "app:app"]
