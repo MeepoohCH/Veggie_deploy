@@ -1,21 +1,24 @@
-# Base image ที่มี PyTorch 2.3.0 + CUDA 12.1
+# Base image Python 3.10 slim
 FROM python:3.10-slim
+
+# กำหนด working directory
 WORKDIR /app
 
-# ติดตั้ง dependencies เพิ่มเติม (ถ้ามีการประมวลผลภาพ)
+# ติดตั้ง dependencies สำหรับ Pillow และ Torch
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libjpeg-dev \
     libpng-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# คัดลอก requirements และติดตั้ง Python packages
+# คัดลอก requirements และติดตั้ง
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# คัดลอกไฟล์ทั้งหมดเข้า container
+# คัดลอกโค้ดทั้งหมดเข้า container
 COPY . .
 
-# รัน Flask ผ่าน Gunicorn
+# ตั้งค่า Gunicorn สำหรับรัน Flask
 CMD ["gunicorn", "-b", "0.0.0.0:5000", "app:app"]
