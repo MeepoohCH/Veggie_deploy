@@ -1,5 +1,5 @@
 # Base image ที่มี PyTorch 2.3.0 + CUDA 12.1
-FROM pytorch/pytorch:2.10.0-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.10.0-cuda12.4-cudnn11-runtime
 
 WORKDIR /app
 
