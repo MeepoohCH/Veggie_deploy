@@ -1,6 +1,5 @@
 # Base image ที่มี PyTorch 2.3.0 + CUDA 12.1
-FROM pytorch/pytorch:2.10.0-cuda12.4-cudnn11-runtime
-
+FROM python:3.10-slim
 WORKDIR /app
 
 # ติดตั้ง dependencies เพิ่มเติม (ถ้ามีการประมวลผลภาพ)
