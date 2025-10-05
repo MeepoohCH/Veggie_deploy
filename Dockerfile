@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # คัดลอกไฟล์ requirements
 COPY requirements.txt .
 
+COPY leaf_model.pt type_model.pt ./
+
 # ติดตั้ง Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
