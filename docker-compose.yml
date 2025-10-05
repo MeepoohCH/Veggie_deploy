@@ -1,9 +1,9 @@
 services:
-  veggie_app:
+  veggie_toon:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: veggie_app
+    container_name: veggie_toon
     ports:
       - "5000:5000"   # map port 5000 ของ container ไป host
     volumes:
