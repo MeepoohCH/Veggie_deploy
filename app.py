@@ -3,7 +3,7 @@ from flask_cors import CORS
 from PIL import Image
 import io
 import torch
-from torchvision import transforms
+from torchvision import transforms, models
 import traceback
 
 app = Flask(__name__)
@@ -11,36 +11,46 @@ CORS(app)  # อนุญาต cross-origin requests
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # จำกัดขนาดไฟล์ 5MB
 
 # ===============================
-# โหลดโมเดล PyTorch (CPU)
+# โหลดโมเดล PyTorch แบบ checkpoint
 # ===============================
-import torchvision.models as models
+def load_leaf_model(path="leaf_model.pt"):
+    try:
+        checkpoint = torch.load(path, map_location="cpu")
+        state_dict = checkpoint["model"]  # key ที่เก็บ weights
 
-try:
-    # -------- Leaf model --------
-    leaf_checkpoint = torch.load("leaf_model.pt", map_location="cpu")
-    leaf_state_dict = leaf_checkpoint["model"]  # เอาเฉพาะ key "model"
+        model = models.mobilenet_v3_small(pretrained=False)
+        model.classifier[3] = torch.nn.Linear(576, 2)  # 2 classes: leaf / not_leaf
+        model.load_state_dict(state_dict)
+        model.eval()
+        print("✅ Leaf model loaded")
+        return model
+    except Exception as e:
+        print("❌ Failed to load leaf model:", e)
+        traceback.print_exc()
+        return None
 
-    leaf_model = models.mobilenet_v3_small(pretrained=False)
-    leaf_model.classifier[3] = torch.nn.Linear(576, 2)  # 2 classes: leaf/not_leaf
-    leaf_model.load_state_dict(leaf_state_dict)
-    leaf_model.eval()
-    print("✅ Leaf model (MobileNetV3) loaded successfully on CPU.")
+def load_type_model(path="type_model.pt"):
+    try:
+        checkpoint = torch.load(path, map_location="cpu")
+        state_dict = checkpoint["model"]
 
-    # -------- Type model --------
-    type_checkpoint = torch.load("type_model.pt", map_location="cpu")
-    type_state_dict = type_checkpoint["model"]
+        model = models.efficientnet_v2_s(pretrained=False)
+        model.classifier[1] = torch.nn.Linear(1280, 4)  # 4 classes: basil, spinach, mint, unknown
+        model.load_state_dict(state_dict)
+        model.eval()
+        print("✅ Type model loaded")
+        return model
+    except Exception as e:
+        print("❌ Failed to load type model:", e)
+        traceback.print_exc()
+        return None
 
-    type_model = models.efficientnet_v2_s(pretrained=False)
-    type_model.classifier[1] = torch.nn.Linear(1280, 4)  # 4 classes: basil, spinach, mint, unknown
-    type_model.load_state_dict(type_state_dict)
-    type_model.eval()
-    print("✅ Type model (EfficientNetV2) loaded successfully on CPU.")
+# โหลดโมเดล
+leaf_model = load_leaf_model()
+type_model = load_type_model()
 
-except Exception as e:
-    print("❌ ERROR: Could not load models.")
-    print(traceback.format_exc())
-    leaf_model, type_model = None, None
-
+if leaf_model is None or type_model is None:
+    raise RuntimeError("One or both PyTorch models failed to load.")
 
 # ===============================
 # Preprocess สำหรับ PyTorch โมเดล
@@ -131,6 +141,15 @@ def predict():
             "details": str(e),
             "trace": detailed_error
         }), 500
+
+# ===============================
+# Health check
+# ===============================
+@app.route("/health")
+def health():
+    if leaf_model and type_model:
+        return {"status": "ok"}, 200
+    return {"status": "model load failed"}, 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
