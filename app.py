@@ -6,23 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 from PIL import Image
 
-# =========================
-# สร้างแอป FastAPI
-# =========================
+
 app = FastAPI(title="YOLO Prediction API")
 
-# ตั้งค่า CORS สำหรับ Next.js หรือ frontend อื่น
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # production แนะนำใส่ origin จริง ๆ
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# =========================
-# โหลดโมเดล YOLO
-# =========================
+
 try:
     model = YOLO("best.pt")
     print("✅ YOLO Model loaded successfully from best.pt")
@@ -30,16 +25,12 @@ except Exception as e:
     print(f"❌ ERROR: Could not load model 'best.pt'. Details: {e}")
     model = None
 
-# =========================
-# Health check endpoint
-# =========================
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "model_loaded": model is not None}
 
-# =========================
-# /predict endpoint
-# =========================
+
 @app.post("/predict")
 async def predict(image: UploadFile = File(...)):
     if model is None:
