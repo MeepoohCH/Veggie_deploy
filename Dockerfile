@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
 WORKDIR /app
 
 COPY requirements.txt .
