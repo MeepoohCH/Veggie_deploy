@@ -1,4 +1,5 @@
-flask
+fastapi
+uvicorn[standard]
 ultralytics
-gunicorn
 pillow
+gunicorn
