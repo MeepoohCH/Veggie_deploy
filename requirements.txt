@@ -1,4 +1,6 @@
-flask
-ultralytics
+fastapi
+uvicorn[standard]
 gunicorn
 pillow
+ultralytics
+python-multipart

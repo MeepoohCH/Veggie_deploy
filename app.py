@@ -1,48 +1,66 @@
-from flask import Flask, request, jsonify
-from ultralytics import YOLO
-from PIL import Image
 import io
 import traceback
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from ultralytics import YOLO
+from PIL import Image
 
-app = Flask(__name__)
+# =========================
+# สร้างแอป FastAPI
+# =========================
+app = FastAPI(title="YOLO Prediction API")
 
-# โหลดโมเดล
+# ตั้งค่า CORS สำหรับ Next.js หรือ frontend อื่น
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # production แนะนำใส่ origin จริง ๆ
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# =========================
+# โหลดโมเดล YOLO
+# =========================
 try:
     model = YOLO("best.pt")
-    print("YOLO Model loaded successfully from best.pt")
+    print("✅ YOLO Model loaded successfully from best.pt")
 except Exception as e:
-    print(f"ERROR: Could not load model 'best.pt'. Please check the file path. Details: {e}")
+    print(f"❌ ERROR: Could not load model 'best.pt'. Details: {e}")
     model = None
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    # 1. ตรวจสอบสถานะโมเดล
+# =========================
+# Health check endpoint
+# =========================
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "model_loaded": model is not None}
+
+# =========================
+# /predict endpoint
+# =========================
+@app.post("/predict")
+async def predict(image: UploadFile = File(...)):
     if model is None:
-        return jsonify({
-            "error": "Model Initialization Error",
-            "details": "YOLO model failed to load during server startup."
-        }), 500
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Model Initialization Error",
+                "details": "YOLO model failed to load during server startup."
+            }
+        )
 
     try:
-        # 2. ตรวจสอบและรับไฟล์ ใช้ request.files["image"] โดยตรงตามที่ Next.js ส่งมา
-        if "image" not in request.files:
-            print("ERROR: File key 'image' not found in request.files.")
-            return jsonify({ 
-                "error": "Missing 'image' file in request.files",
-                "details": "The Flask server did not receive the file with the expected key 'image'."
-            }), 400
-            
-        file = request.files["image"]
-        
-        # 3. อ่านและเปิดไฟล์ด้วย PIL ใช้ file.read() เพื่ออ่านไบนารี และใช้ io.BytesIO เพื่อให้ PIL เปิดได้
-        img_bytes = file.read()
+        # อ่านไฟล์จาก request
+        img_bytes = await image.read()
         img = Image.open(io.BytesIO(img_bytes))
-        print(f"Received file: {file.filename}, Image size: {img.size}")
+        print(f"📸 Received file: {image.filename}, size: {img.size}")
 
-        # 4. การประมวลผลโมเดล
+        # ทำนายด้วย YOLO
         results = model(img)
 
-        # 5. การดึงผลลัพธ์
+        # ดึงผลลัพธ์
         predictions = []
         if results and hasattr(results[0], 'boxes'):
             for r in results[0].boxes:
@@ -50,25 +68,23 @@ def predict():
                     "class": model.names.get(int(r.cls[0]), "Unknown"),
                     "confidence": float(r.conf[0])
                 })
-        
-        print(f"Prediction successful. Found {len(predictions)} objects.")
-        return jsonify(predictions)
+
+        print(f"✅ Prediction successful. Found {len(predictions)} objects.")
+        return JSONResponse(content=predictions)
 
     except Exception as e:
         detailed_error = traceback.format_exc()
-        print(f"--- CRITICAL ERROR DURING PREDICTION ---")
+        print("🚨 --- CRITICAL ERROR DURING PREDICTION ---")
         print(detailed_error)
         print("------------------------------------------")
-        
-        # ส่ง 500 Internal Server Error พร้อมรายละเอียดกลับไป
-        return jsonify({
-            "error": "Prediction processing failed in Flask",
-            "details": str(e),
-            "trace": detailed_error
-        }), 500
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Prediction processing failed in FastAPI",
+                "details": str(e),
+                "trace": detailed_error
+            }
+        )
 
 
-if __name__ == "__main__":
-    # สำคัญ: เพื่อให้สามารถดีบักได้ง่าย ควรตั้งค่า CORS ในสภาพแวดล้อมจริง
-    # สำหรับการทดสอบ localhost จะไม่ต้องตั้งค่า CORS แต่ถ้ายังไม่ได้ผล ให้ลองใช้ไลบรารี flask_cors
-    app.run(host="0.0.0.0", port=5000)
